@@ -249,6 +249,7 @@ void displayEventsSortedByDate() {
         eventsCopy.push_back(&event);
     }
 
+    
     // Apply Bubble Sort
     bubbleSortEventsByDate(eventsCopy);
 
