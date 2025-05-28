@@ -5,11 +5,11 @@
 #include <iomanip>   // For std::setw, std::left, std::right
 #include <limits>    // For numeric_limits
 #include <map>       // For std::map
-#include <set>       // To help with unique department listing if needed
+#include <set>       // To help with unique department listing and date mapping
 
 using namespace std;
 
-// Structure to represent a school event
+// --- Existing Event Structure ---
 struct Event {
     int id;
     string name;
@@ -35,6 +35,127 @@ map<string, Event*> eventNameMap;
 // Map department name to a vector of pointers to events in that department
 map<string, vector<Event*>> eventsByDepartment;
 
+// --- Segment Tree Related Structures and Global Variables ---
+// Map to convert date strings to numerical indices for the segment tree
+map<string, int> dateToIndexMap;
+// Vector to convert numerical indices back to date strings
+vector<string> indexToDateMap;
+// The base array for the segment tree, storing event counts per date index
+vector<int> dateEventCounts;
+// The segment tree itself
+vector<int> segmentTree;
+
+// --- Segment Tree Class/Functions ---
+// This will be a simple segment tree for sum queries (counting events)
+
+// Function to build the segment tree
+// `node`: current node index in segmentTree vector
+// `start`: starting index of the current segment in dateEventCounts
+// `end`: ending index of the current segment in dateEventCounts
+void buildSegmentTree(int node, int start, int end) {
+    if (start == end) {
+        // Leaf node, store the count for this single date
+        segmentTree[node] = dateEventCounts[start];
+    } else {
+        int mid = (start + end) / 2;
+        // Recursively build left and right children
+        buildSegmentTree(2 * node, start, mid);
+        buildSegmentTree(2 * node + 1, mid + 1, end);
+        // Current node stores the sum of its children
+        segmentTree[node] = segmentTree[2 * node] + segmentTree[2 * node + 1];
+    }
+}
+
+// Function to update a value in the segment tree
+// `node`: current node index in segmentTree vector
+// `start`: starting index of the current segment
+// `end`: ending index of the current segment
+// `idx`: index in dateEventCounts to update
+// `val`: value to add/subtract (e.g., 1 for add, -1 for remove)
+void updateSegmentTree(int node, int start, int end, int idx, int val) {
+    if (start == end) {
+        // Leaf node, update the count directly
+        segmentTree[node] += val;
+    } else {
+        int mid = (start + end) / 2;
+        if (start <= idx && idx <= mid) {
+            // idx is in the left child's range
+            updateSegmentTree(2 * node, start, mid, idx, val);
+        } else {
+            // idx is in the right child's range
+            updateSegmentTree(2 * node + 1, mid + 1, end, idx, val);
+        }
+        // Update current node by summing children
+        segmentTree[node] = segmentTree[2 * node] + segmentTree[2 * node + 1];
+    }
+}
+
+// Function to query the sum (count) in a given range
+// `node`: current node index
+// `start`: starting index of current segment
+// `end`: ending index of current segment
+// `l`: left boundary of query range
+// `r`: right boundary of query range
+int querySegmentTree(int node, int start, int end, int l, int r) {
+    // Query range outside current segment
+    if (r < start || end < l) {
+        return 0; // No overlap
+    }
+    // Query range completely covers current segment
+    if (l <= start && end <= r) {
+        return segmentTree[node];
+    }
+    // Partial overlap, recurse on children
+    int mid = (start + end) / 2;
+    int p1 = querySegmentTree(2 * node, start, mid, l, r);
+    int p2 = querySegmentTree(2 * node + 1, mid + 1, end, l, r);
+    return p1 + p2;
+}
+
+// --- Helper Functions for Segment Tree Management ---
+
+// Updates the date mapping and prepares the base array for the segment tree
+void prepareDateDataForSegmentTree() {
+    set<string> uniqueDates;
+    for (const auto& event : events) {
+        uniqueDates.insert(event.date);
+    }
+
+    dateToIndexMap.clear();
+    indexToDateMap.clear();
+    int index = 0;
+    for (const string& date : uniqueDates) {
+        dateToIndexMap[date] = index;
+        indexToDateMap.push_back(date);
+        index++;
+    }
+
+    // Initialize dateEventCounts based on current events
+    dateEventCounts.assign(indexToDateMap.size(), 0);
+    for (const auto& event : events) {
+        if (dateToIndexMap.count(event.date)) { // Ensure date is mapped
+            dateEventCounts[dateToIndexMap[event.date]]++;
+        }
+    }
+}
+
+// Rebuilds the entire segment tree. Call this when dates change or many events are added/removed.
+void rebuildSegmentTree() {
+    prepareDateDataForSegmentTree(); // Update date mapping and base counts first
+
+    if (dateEventCounts.empty()) {
+        segmentTree.assign(1, 0); // No dates, tree is empty
+        return;
+    }
+
+    int n = dateEventCounts.size();
+    // Segment tree array size is usually 4*N for safety
+    segmentTree.assign(4 * n, 0);
+    buildSegmentTree(1, 0, n - 1);
+}
+
+// --- Existing Helper Functions ---
+
 // Simple function to center a string within a given width
 string center(const string& s, int w) {
     int padding = (w - s.length()) / 2;
@@ -50,6 +171,8 @@ void updateSecondaryDataStructures() {
         eventNameMap[event.name] = &event; // Store pointer to event
         eventsByDepartment[event.department].push_back(&event); // Group by department
     }
+    // Crucially, rebuild the segment tree data structures after event changes
+    rebuildSegmentTree();
 }
 
 // Function to add a new event
@@ -86,7 +209,7 @@ void addEvent() {
     events.push_back(newEvent);
     sort(events.begin(), events.end()); // Maintain sorted order for binary search (used by `lower_bound` internally if we still needed it for some cases)
 
-    // Update secondary data structures
+    // Update secondary data structures, which now also rebuilds the segment tree
     updateSecondaryDataStructures();
 
     cout << "\nUEvent '" << newEvent.name << "' added successfully! ✨" << endl;
@@ -249,6 +372,7 @@ void displayEventsSortedByDate() {
         eventsCopy.push_back(&event);
     }
 
+    
     // Apply Bubble Sort
     bubbleSortEventsByDate(eventsCopy);
 
@@ -287,6 +411,63 @@ void searchEventsByDate() {
     cout << endl;
 }
 
+// --- New Function: Query Events by Date Range (using Segment Tree) ---
+void queryEventsByDateRange() {
+    cout << "\n" << string(45, '*') << endl;
+    cout << center("* --- Count UEvents by Date Range --- *", 45) << endl;
+    cout << string(45, '*') << endl;
+
+    if (indexToDateMap.empty()) {
+        cout << "No events available to query by date. 😔" << endl;
+        cout << string(45, '*') << endl;
+        return;
+    }
+
+    cout << setw(30) << left << "| Enter Start Date (YYYY-MM-DD):";
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+    string startDateStr;
+    getline(cin, startDateStr);
+
+    cout << setw(30) << left << "| Enter End Date (YYYY-MM-DD):";
+    string endDateStr;
+    getline(cin, endDateStr);
+    cout << string(45, '*') << endl;
+
+    // Convert date strings to indices
+    // We need to find the lower bound for startDateStr and upper bound for endDateStr
+    // in the sorted `indexToDateMap` to get the correct range of indices.
+    
+    // Find the actual start and end indices in the sorted date list
+    auto it_start = lower_bound(indexToDateMap.begin(), indexToDateMap.end(), startDateStr);
+    auto it_end = upper_bound(indexToDateMap.begin(), indexToDateMap.end(), endDateStr);
+
+    int startIdx = (it_start == indexToDateMap.end()) ? -1 : distance(indexToDateMap.begin(), it_start);
+    // it_end points to the element *after* the last one that matches endDateStr
+    int endIdx = (it_end == indexToDateMap.begin()) ? -1 : distance(indexToDateMap.begin(), it_end) -1; 
+    
+    if (startIdx == -1 || endIdx == -1 || startIdx > endIdx) {
+        cout << "\nNo valid date range or events found in the specified range. 😔" << endl;
+        return;
+    }
+
+    if (startIdx >= indexToDateMap.size() || endIdx < 0) { // Safety check
+        cout << "\nError: Invalid date range mapping. 😔" << endl;
+        return;
+    }
+
+    // Perform the segment tree query
+    int numDates = indexToDateMap.size();
+    if (numDates == 0) { // If no dates are mapped, there are no events
+        cout << "\nTotal UEvents in range [" << startDateStr << " to " << endDateStr << "]: 0" << endl;
+        return;
+    }
+
+    int eventCount = querySegmentTree(1, 0, numDates - 1, startIdx, endIdx);
+
+    cout << "\nTotal UEvents in range [" << startDateStr << " to " << endDateStr << "]: " << eventCount << " ✨" << endl;
+    cout << endl;
+}
+
 
 // Creative Terminal Interface - UEvent Organizer
 void displayMenu() {
@@ -308,16 +489,16 @@ void displayMenu() {
     cout << "  [3] 🔍 Search UEvent by Name (Map Lookup)\n";
     cout << "  [4] ✍️ Register for a UEvent\n";
     cout << "  [5] 🏷️ View UEvents by Department (Map Lookup)\n";
-    cout << "  [6] 📅 View UEvents Sorted by Date (Bubble Sort)\n"; // New option for 2nd sort
-    cout << "  [7] 🔎 Search UEvents by Date (Linear Search)\n";   // New option for 2nd search
-    cout << "  [8] 🚪 Exit\n"; // Exit is now 8
+    cout << "  [6] 📅 View UEvents Sorted by Date (Bubble Sort)\n";
+    cout << "  [7] 🔎 Search UEvents by Date (Linear Search)\n";
+    cout << "  [8] 📊 Count UEvents by Date Range (Segment Tree)\n"; // New Segment Tree option
+    cout << "  [9] 🚪 Exit\n"; // Exit is now 9
     cout << "  " << string(45, '-') << "\n";
     cout << "  ➡️ Enter your choice: ";
 }
 
 int main() {
-    // Initial update of secondary data structures in case there were pre-existing events
-    // (though in this specific 'main' function, events starts empty)
+    // Initial update of secondary data structures and segment tree
     updateSecondaryDataStructures();
 
     int choice;
@@ -347,13 +528,16 @@ int main() {
             case 7: // New case for Linear Search
                 searchEventsByDate();
                 break;
-            case 8: // Exit option changed
+            case 8: // New case for Segment Tree
+                queryEventsByDateRange();
+                break;
+            case 9: // Exit option changed
                 cout << "\n👋 Exiting UEvent Organizer. Have a great day! 👋\n";
                 break;
             default:
                 cout << "\n⚠️ Invalid choice. Please try again. ⚠️\n";
         }
-    } while (choice != 8); // Loop condition changed
+    } while (choice != 9); // Loop condition changed
 
     return 0;
 }
